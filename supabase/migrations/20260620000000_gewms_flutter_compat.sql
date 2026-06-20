@@ -97,15 +97,38 @@ alter table if exists public.tbl_offices enable row level security;
 alter table if exists public.drivers enable row level security;
 alter table if exists public.cars enable row level security;
 
-create policy if not exists authenticated_profiles_read on public.profiles for select to authenticated using (true);
-create policy if not exists authenticated_water_accounts_all on public.water_accounts for all to authenticated using (true) with check (true);
-create policy if not exists authenticated_water_bills_all on public.water_bills for all to authenticated using (true) with check (true);
-create policy if not exists authenticated_electricity_account_all on public.electricity_account for all to authenticated using (true) with check (true);
-create policy if not exists authenticated_electricity_bills_all on public.electricity_bills for all to authenticated using (true) with check (true);
-create policy if not exists authenticated_electricity_meter_all on public.electricity_meter for all to authenticated using (true) with check (true);
-create policy if not exists authenticated_gas_transactions_all on public.gas_transactions for all to authenticated using (true) with check (true);
-create policy if not exists authenticated_gas_receipts_all on public.gas_receipts for all to authenticated using (true) with check (true);
-create policy if not exists authenticated_tbl_bldg_read on public.tbl_bldg for select to authenticated using (true);
-create policy if not exists authenticated_tbl_offices_read on public.tbl_offices for select to authenticated using (true);
-create policy if not exists authenticated_drivers_read on public.drivers for select to authenticated using (true);
-create policy if not exists authenticated_cars_read on public.cars for select to authenticated using (true);
+drop policy if exists authenticated_profiles_read on public.profiles;
+create policy authenticated_profiles_read on public.profiles for select to authenticated using (true);
+
+drop policy if exists authenticated_water_accounts_all on public.water_accounts;
+create policy authenticated_water_accounts_all on public.water_accounts for all to authenticated using (true) with check (true);
+
+drop policy if exists authenticated_water_bills_all on public.water_bills;
+create policy authenticated_water_bills_all on public.water_bills for all to authenticated using (true) with check (true);
+
+drop policy if exists authenticated_electricity_account_all on public.electricity_account;
+create policy authenticated_electricity_account_all on public.electricity_account for all to authenticated using (true) with check (true);
+
+drop policy if exists authenticated_electricity_bills_all on public.electricity_bills;
+create policy authenticated_electricity_bills_all on public.electricity_bills for all to authenticated using (true) with check (true);
+
+drop policy if exists authenticated_electricity_meter_all on public.electricity_meter;
+create policy authenticated_electricity_meter_all on public.electricity_meter for all to authenticated using (true) with check (true);
+
+drop policy if exists authenticated_gas_transactions_all on public.gas_transactions;
+create policy authenticated_gas_transactions_all on public.gas_transactions for all to authenticated using (true) with check (true);
+
+drop policy if exists authenticated_gas_receipts_all on public.gas_receipts;
+create policy authenticated_gas_receipts_all on public.gas_receipts for all to authenticated using (true) with check (true);
+
+drop policy if exists authenticated_tbl_bldg_read on public.tbl_bldg;
+create policy authenticated_tbl_bldg_read on public.tbl_bldg for select to authenticated using (true);
+
+drop policy if exists authenticated_tbl_offices_read on public.tbl_offices;
+create policy authenticated_tbl_offices_read on public.tbl_offices for select to authenticated using (true);
+
+drop policy if exists authenticated_drivers_read on public.drivers;
+create policy authenticated_drivers_read on public.drivers for select to authenticated using (true);
+
+drop policy if exists authenticated_cars_read on public.cars;
+create policy authenticated_cars_read on public.cars for select to authenticated using (true);
