@@ -26,22 +26,32 @@ class _GasTransactionDetailScreenState extends State<GasTransactionDetailScreen>
 
   void refreshReceipts() => setState(() => receiptsFuture = loadReceipts());
 
-  Future<void> uploadReceipt() async {
+  Future<PickedReceipt?> pickReceiptFile() async {
     final picked = await FilePicker.platform.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['jpg', 'jpeg', 'png', 'pdf'],
       withData: true,
     );
-    if (picked == null || picked.files.isEmpty) return;
+    if (picked == null || picked.files.isEmpty) return null;
 
     final file = picked.files.single;
     final Uint8List? bytes = file.bytes;
     if (bytes == null) {
       setState(() => error = 'Could not read the selected file. Try a smaller file or a different picker.');
-      return;
+      return null;
     }
 
-    final contentType = contentTypeForName(file.name);
+    return PickedReceipt(
+      name: file.name,
+      bytes: bytes,
+      contentType: contentTypeForName(file.name),
+    );
+  }
+
+  Future<void> uploadReceipt() async {
+    final file = await pickReceiptFile();
+    if (file == null) return;
+
     final storagePath = 'transactions/${widget.row['id']}/${DateTime.now().millisecondsSinceEpoch}_${safeFilePart(file.name)}';
 
     setState(() {
@@ -51,16 +61,91 @@ class _GasTransactionDetailScreenState extends State<GasTransactionDetailScreen>
     try {
       await widget.supabase.storage.from('gas-receipts').uploadBinary(
             storagePath,
-            bytes,
-            fileOptions: FileOptions(contentType: contentType, upsert: false),
+            file.bytes,
+            fileOptions: FileOptions(contentType: file.contentType, upsert: false),
           );
       await widget.supabase.from('gas_receipts').insert({
         'transaction_id': widget.row['id'],
         'file_path': storagePath,
         'file_name': file.name,
-        'content_type': contentType,
+        'content_type': file.contentType,
         'uploaded_by': widget.supabase.auth.currentUser?.id,
       });
+      refreshReceipts();
+    } catch (e) {
+      setState(() => error = cleanError(e));
+    } finally {
+      if (mounted) setState(() => uploading = false);
+    }
+  }
+
+  Future<void> replaceReceipt(Map<String, dynamic> receipt) async {
+    final oldPath = receipt['file_path']?.toString();
+    final receiptId = receipt['id'];
+    if (receiptId == null || oldPath == null || oldPath.isEmpty) return;
+
+    final file = await pickReceiptFile();
+    if (file == null) return;
+
+    final newPath = 'transactions/${widget.row['id']}/${DateTime.now().millisecondsSinceEpoch}_${safeFilePart(file.name)}';
+
+    setState(() {
+      uploading = true;
+      error = null;
+    });
+    try {
+      await widget.supabase.storage.from('gas-receipts').uploadBinary(
+            newPath,
+            file.bytes,
+            fileOptions: FileOptions(contentType: file.contentType, upsert: false),
+          );
+      await widget.supabase.from('gas_receipts').update({
+        'file_path': newPath,
+        'file_name': file.name,
+        'content_type': file.contentType,
+        'uploaded_by': widget.supabase.auth.currentUser?.id,
+        'uploaded_at': DateTime.now().toIso8601String(),
+      }).eq('id', receiptId);
+      await widget.supabase.storage.from('gas-receipts').remove([oldPath]);
+      refreshReceipts();
+    } catch (e) {
+      setState(() => error = cleanError(e));
+    } finally {
+      if (mounted) setState(() => uploading = false);
+    }
+  }
+
+  Future<void> deleteReceipt(Map<String, dynamic> receipt) async {
+    final filePath = receipt['file_path']?.toString();
+    final receiptId = receipt['id'];
+    if (receiptId == null) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete receipt?'),
+        content: Text('This will remove ${receipt['file_name'] ?? 'this receipt'} from the transaction.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          FilledButton.tonalIcon(
+            onPressed: () => Navigator.pop(context, true),
+            icon: const Icon(Icons.delete),
+            label: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    setState(() {
+      uploading = true;
+      error = null;
+    });
+    try {
+      await widget.supabase.from('gas_receipts').delete().eq('id', receiptId);
+      if (filePath != null && filePath.isNotEmpty) {
+        await widget.supabase.storage.from('gas-receipts').remove([filePath]);
+      }
       refreshReceipts();
     } catch (e) {
       setState(() => error = cleanError(e));
@@ -141,7 +226,19 @@ class _GasTransactionDetailScreenState extends State<GasTransactionDetailScreen>
                         title: Text(receipt['file_name']?.toString() ?? receipt['file_path']?.toString() ?? 'Receipt'),
                         subtitle: Text('Uploaded: ${dateText(receipt['uploaded_at'])}\nPath: ${receipt['file_path'] ?? '-'}'),
                         isThreeLine: true,
-                        trailing: TextButton(onPressed: uploading ? null : () => showSignedLink(receipt), child: const Text('Link')),
+                        trailing: PopupMenuButton<String>(
+                          enabled: !uploading,
+                          onSelected: (value) {
+                            if (value == 'link') showSignedLink(receipt);
+                            if (value == 'replace') replaceReceipt(receipt);
+                            if (value == 'delete') deleteReceipt(receipt);
+                          },
+                          itemBuilder: (context) => const [
+                            PopupMenuItem(value: 'link', child: Text('Create link')),
+                            PopupMenuItem(value: 'replace', child: Text('Replace file')),
+                            PopupMenuItem(value: 'delete', child: Text('Delete')),
+                          ],
+                        ),
                       ),
                     ),
                 ],
@@ -153,6 +250,13 @@ class _GasTransactionDetailScreenState extends State<GasTransactionDetailScreen>
       ),
     );
   }
+}
+
+class PickedReceipt {
+  const PickedReceipt({required this.name, required this.bytes, required this.contentType});
+  final String name;
+  final Uint8List bytes;
+  final String contentType;
 }
 
 Widget detailTile(String label, dynamic value) => ListTile(
