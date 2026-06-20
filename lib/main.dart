@@ -281,22 +281,44 @@ class BillingScreen extends StatefulWidget {
 class _BillingScreenState extends State<BillingScreen> {
   late Future<List<Map<String, dynamic>>> future = load();
 
+  bool get isWater => widget.table == 'water_bills';
+
   Future<List<Map<String, dynamic>>> load() async {
     final rows = await supabase.from(widget.table).select().order('month_billed', ascending: false);
     return rows.map<Map<String, dynamic>>((row) => Map<String, dynamic>.from(row)).toList();
   }
 
+  void refresh() => setState(() => future = load());
+
   Future<void> add() async {
-    final saved = await showDialog<Map<String, dynamic>>(context: context, builder: (_) => BillingFormDialog(title: 'Add ${widget.title}', usageColumn: widget.usageColumn, isWater: widget.table == 'water_bills'));
+    final saved = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (_) => BillingFormDialog(title: 'Add ${widget.title}', usageColumn: widget.usageColumn, isWater: isWater),
+    );
     if (saved == null) return;
     await supabase.from(widget.table).insert(saved);
-    setState(() => future = load());
+    refresh();
   }
 
   Future<void> markPaid(Map<String, dynamic> row) async {
     final today = DateTime.now().toIso8601String().substring(0, 10);
-    await supabase.from(widget.table).update(widget.table == 'water_bills' ? {'date_paid': today, 'status': 'Paid'} : {'date_paid': today}).eq('id', row['id']);
-    setState(() => future = load());
+    await supabase.from(widget.table).update(isWater ? {'date_paid': today, 'status': 'Paid'} : {'date_paid': today}).eq('id', row['id']);
+    refresh();
+  }
+
+  Future<void> openDetails(Map<String, dynamic> row) async {
+    final changed = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (_) => BillingDetailScreen(
+          title: widget.title,
+          table: widget.table,
+          usageColumn: widget.usageColumn,
+          isWater: isWater,
+          row: row,
+        ),
+      ),
+    );
+    if (changed == true) refresh();
   }
 
   @override
@@ -305,12 +327,12 @@ class _BillingScreenState extends State<BillingScreen> {
       future: future,
       builder: (context, snapshot) {
         if (snapshot.connectionState != ConnectionState.done) return const Center(child: CircularProgressIndicator());
-        if (snapshot.hasError) return ErrorView(error: snapshot.error, onRetry: () => setState(() => future = load()));
+        if (snapshot.hasError) return ErrorView(error: snapshot.error, onRetry: refresh);
         final rows = snapshot.data!;
         return Scaffold(
           floatingActionButton: FloatingActionButton.extended(onPressed: add, icon: const Icon(Icons.add), label: const Text('Add bill')),
           body: RefreshIndicator(
-            onRefresh: () async => setState(() => future = load()),
+            onRefresh: () async => refresh(),
             child: ListView(
               padding: const EdgeInsets.all(12),
               children: [
@@ -322,6 +344,7 @@ class _BillingScreenState extends State<BillingScreen> {
                       title: Text('${row['billing_id'] ?? 'No billing id'} • ${row['account_number'] ?? ''}'),
                       subtitle: Text('Month: ${dateText(row['month_billed'])} • Usage: ${row[widget.usageColumn] ?? 0} • Due: ${dateText(row['due_date'])}\nAmount: ${peso(row['amount'])} • Paid: ${row['date_paid'] == null ? 'No' : dateText(row['date_paid'])}'),
                       isThreeLine: true,
+                      onTap: () => openDetails(row),
                       trailing: row['date_paid'] == null ? TextButton(onPressed: () => markPaid(row), child: const Text('Paid')) : const Icon(Icons.check_circle),
                     ),
                   ),
@@ -334,11 +357,160 @@ class _BillingScreenState extends State<BillingScreen> {
   }
 }
 
+class BillingDetailScreen extends StatefulWidget {
+  const BillingDetailScreen({super.key, required this.title, required this.table, required this.usageColumn, required this.isWater, required this.row});
+  final String title;
+  final String table;
+  final String usageColumn;
+  final bool isWater;
+  final Map<String, dynamic> row;
+
+  @override
+  State<BillingDetailScreen> createState() => _BillingDetailScreenState();
+}
+
+class _BillingDetailScreenState extends State<BillingDetailScreen> {
+  late Map<String, dynamic> row = Map<String, dynamic>.from(widget.row);
+  bool saving = false;
+  String? error;
+
+  Future<void> edit() async {
+    final saved = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (_) => BillingFormDialog(
+        title: 'Edit ${widget.title}',
+        usageColumn: widget.usageColumn,
+        isWater: widget.isWater,
+        initialRow: row,
+      ),
+    );
+    if (saved == null) return;
+    setState(() {
+      saving = true;
+      error = null;
+    });
+    try {
+      await supabase.from(widget.table).update(saved).eq('id', row['id']);
+      setState(() => row = {...row, ...saved});
+    } catch (e) {
+      setState(() => error = cleanError(e));
+    } finally {
+      if (mounted) setState(() => saving = false);
+    }
+  }
+
+  Future<void> markPaid() async {
+    final today = DateTime.now().toIso8601String().substring(0, 10);
+    final update = widget.isWater ? {'date_paid': today, 'status': 'Paid'} : {'date_paid': today};
+    setState(() {
+      saving = true;
+      error = null;
+    });
+    try {
+      await supabase.from(widget.table).update(update).eq('id', row['id']);
+      setState(() => row = {...row, ...update});
+    } catch (e) {
+      setState(() => error = cleanError(e));
+    } finally {
+      if (mounted) setState(() => saving = false);
+    }
+  }
+
+  Future<void> deleteBill() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete bill?'),
+        content: Text('This will permanently delete ${row['billing_id'] ?? 'this bill'}. This cannot be undone.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          FilledButton.tonalIcon(
+            onPressed: () => Navigator.pop(context, true),
+            icon: const Icon(Icons.delete),
+            label: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    setState(() {
+      saving = true;
+      error = null;
+    });
+    try {
+      await supabase.from(widget.table).delete().eq('id', row['id']);
+      if (mounted) Navigator.pop(context, true);
+    } catch (e) {
+      setState(() => error = cleanError(e));
+    } finally {
+      if (mounted) setState(() => saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return PopScope(
+      canPop: true,
+      onPopInvoked: (_) => Navigator.pop(context, true),
+      child: Scaffold(
+        appBar: AppBar(
+          title: Text(row['billing_id']?.toString() ?? widget.title),
+          actions: [
+            IconButton(onPressed: saving ? null : edit, icon: const Icon(Icons.edit), tooltip: 'Edit'),
+            IconButton(onPressed: saving ? null : deleteBill, icon: const Icon(Icons.delete), tooltip: 'Delete'),
+          ],
+        ),
+        body: ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            if (saving) const LinearProgressIndicator(),
+            if (error != null) Card(child: ListTile(leading: const Icon(Icons.error_outline), title: Text(error!))),
+            Card(
+              child: Column(
+                children: [
+                  detailTile('Billing ID', row['billing_id']),
+                  detailTile('Account number', row['account_number']),
+                  detailTile('Office ID', row['office_id']),
+                  detailTile('Meter number', row['meter_number']),
+                  detailTile('Month billed', dateText(row['month_billed'])),
+                  detailTile('Period from', dateText(row['period_from'])),
+                  detailTile('Period to', dateText(row['period_to'])),
+                  detailTile('Due date', dateText(row['due_date'])),
+                  detailTile('Previous reading', row['previous_reading']),
+                  detailTile('Present reading', row['present_reading']),
+                  detailTile('Usage', row[widget.usageColumn]),
+                  detailTile('Amount', peso(row['amount'])),
+                  detailTile('Date paid', row['date_paid'] == null ? 'Not paid' : dateText(row['date_paid'])),
+                  if (widget.isWater) detailTile('Status', row['status'] ?? 'Pending'),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            if (row['date_paid'] == null)
+              FilledButton.icon(
+                onPressed: saving ? null : markPaid,
+                icon: const Icon(Icons.check_circle),
+                label: const Text('Mark as paid'),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+Widget detailTile(String label, dynamic value) => ListTile(
+      dense: true,
+      title: Text(label),
+      subtitle: Text(value == null || value.toString().isEmpty ? '-' : value.toString()),
+    );
+
 class BillingFormDialog extends StatefulWidget {
-  const BillingFormDialog({super.key, required this.title, required this.usageColumn, required this.isWater});
+  const BillingFormDialog({super.key, required this.title, required this.usageColumn, required this.isWater, this.initialRow});
   final String title;
   final String usageColumn;
   final bool isWater;
+  final Map<String, dynamic>? initialRow;
 
   @override
   State<BillingFormDialog> createState() => _BillingFormDialogState();
@@ -361,7 +533,22 @@ class _BillingFormDialogState extends State<BillingFormDialog> {
   @override
   void initState() {
     super.initState();
-    billingId.text = '${widget.isWater ? 'WB' : 'EB'}-${DateTime.now().millisecondsSinceEpoch}';
+    final row = widget.initialRow;
+    if (row == null) {
+      billingId.text = '${widget.isWater ? 'WB' : 'EB'}-${DateTime.now().millisecondsSinceEpoch}';
+      return;
+    }
+    billingId.text = row['billing_id']?.toString() ?? '';
+    accountNumber.text = row['account_number']?.toString() ?? '';
+    officeId.text = row['office_id']?.toString() ?? '';
+    meterNumber.text = row['meter_number']?.toString() ?? '';
+    monthBilled.text = dateInput(row['month_billed']);
+    periodFrom.text = dateInput(row['period_from']);
+    periodTo.text = dateInput(row['period_to']);
+    dueDate.text = dateInput(row['due_date']);
+    previousReading.text = row['previous_reading']?.toString() ?? '0';
+    presentReading.text = row['present_reading']?.toString() ?? '0';
+    amount.text = row['amount']?.toString() ?? '0';
   }
 
   @override
@@ -409,7 +596,7 @@ class _BillingFormDialogState extends State<BillingFormDialog> {
               'present_reading': present,
               widget.usageColumn: present - previous,
               'amount': asDouble(amount.text),
-              if (widget.isWater) 'status': 'Pending',
+              if (widget.isWater && widget.initialRow == null) 'status': 'Pending',
             });
           },
           child: const Text('Save'),
@@ -578,5 +765,6 @@ int? nullableInt(String value) => value.trim().isEmpty ? null : int.tryParse(val
 String? nullableText(String value) => value.trim().isEmpty ? null : value.trim();
 double asDouble(dynamic value) => double.tryParse((value ?? '0').toString()) ?? 0;
 String dateText(dynamic value) => value == null ? '-' : value.toString().split('T').first;
+String dateInput(dynamic value) => value == null ? '' : value.toString().split('T').first;
 String peso(dynamic value) => 'PHP ${asDouble(value).toStringAsFixed(2)}';
 double sumAmount(Iterable<dynamic> rows) => rows.fold<double>(0, (total, row) => total + asDouble(row['amount']));
