@@ -33,7 +33,7 @@ This applies `supabase/migrations/20260620030000_profiles_auth_mapping.sql`, whi
 
 ## 3. Install importer dependency
 
-The importer uses the Supabase JavaScript client. Install it locally:
+The importer and verifier use the Supabase JavaScript client. Install it locally:
 
 ```bash
 npm install @supabase/supabase-js
@@ -73,12 +73,35 @@ The script will:
 4. upsert their matching `public.profiles` row;
 5. preserve Admin/Driver role and driver ID metadata.
 
-## 6. Test login
+## 6. Verify the import
+
+Run the verifier against the same CSV:
+
+```bash
+node tools/verify_legacy_users.mjs path/to/users.csv
+```
+
+The verifier checks that every valid CSV row has:
+
+1. a matching Supabase Auth user;
+2. a linked `public.profiles` row with the same Auth user ID;
+3. the expected email and normalized role;
+4. the expected driver ID for Driver accounts.
+
+A successful run exits with status code `0` and prints one `OK` line for each expected user. Any missing Auth user, missing profile, or profile mismatch prints a `FAIL` line and exits with status code `1`.
+
+## 7. Test login
 
 Use the imported email and the temporary default password:
 
 ```bash
 flutter run -d chrome --dart-define=SUPABASE_KEY=your_publishable_key
 ```
+
+Minimum manual checks:
+
+1. Admin account can sign in and view all migrated modules.
+2. Driver account can sign in and only sees driver-scoped gas transactions for its `driver_id`.
+3. Imported users can change their password in Supabase Auth or through the future password-reset flow.
 
 After users can log in, change their passwords from Supabase Auth or by adding a password-reset flow.
