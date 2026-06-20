@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'gas_transaction_detail.dart';
+
 const supabaseUrl = 'https://laonbefisynknlnzcnkt.supabase.co';
 const supabaseKey = String.fromEnvironment('SUPABASE_KEY');
 
@@ -449,51 +451,47 @@ class _BillingDetailScreenState extends State<BillingDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return PopScope(
-      canPop: true,
-      onPopInvoked: (_) => Navigator.pop(context, true),
-      child: Scaffold(
-        appBar: AppBar(
-          title: Text(row['billing_id']?.toString() ?? widget.title),
-          actions: [
-            IconButton(onPressed: saving ? null : edit, icon: const Icon(Icons.edit), tooltip: 'Edit'),
-            IconButton(onPressed: saving ? null : deleteBill, icon: const Icon(Icons.delete), tooltip: 'Delete'),
-          ],
-        ),
-        body: ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
-            if (saving) const LinearProgressIndicator(),
-            if (error != null) Card(child: ListTile(leading: const Icon(Icons.error_outline), title: Text(error!))),
-            Card(
-              child: Column(
-                children: [
-                  detailTile('Billing ID', row['billing_id']),
-                  detailTile('Account number', row['account_number']),
-                  detailTile('Office ID', row['office_id']),
-                  detailTile('Meter number', row['meter_number']),
-                  detailTile('Month billed', dateText(row['month_billed'])),
-                  detailTile('Period from', dateText(row['period_from'])),
-                  detailTile('Period to', dateText(row['period_to'])),
-                  detailTile('Due date', dateText(row['due_date'])),
-                  detailTile('Previous reading', row['previous_reading']),
-                  detailTile('Present reading', row['present_reading']),
-                  detailTile('Usage', row[widget.usageColumn]),
-                  detailTile('Amount', peso(row['amount'])),
-                  detailTile('Date paid', row['date_paid'] == null ? 'Not paid' : dateText(row['date_paid'])),
-                  if (widget.isWater) detailTile('Status', row['status'] ?? 'Pending'),
-                ],
-              ),
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(row['billing_id']?.toString() ?? widget.title),
+        actions: [
+          IconButton(onPressed: saving ? null : edit, icon: const Icon(Icons.edit), tooltip: 'Edit'),
+          IconButton(onPressed: saving ? null : deleteBill, icon: const Icon(Icons.delete), tooltip: 'Delete'),
+        ],
+      ),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          if (saving) const LinearProgressIndicator(),
+          if (error != null) Card(child: ListTile(leading: const Icon(Icons.error_outline), title: Text(error!))),
+          Card(
+            child: Column(
+              children: [
+                detailTile('Billing ID', row['billing_id']),
+                detailTile('Account number', row['account_number']),
+                detailTile('Office ID', row['office_id']),
+                detailTile('Meter number', row['meter_number']),
+                detailTile('Month billed', dateText(row['month_billed'])),
+                detailTile('Period from', dateText(row['period_from'])),
+                detailTile('Period to', dateText(row['period_to'])),
+                detailTile('Due date', dateText(row['due_date'])),
+                detailTile('Previous reading', row['previous_reading']),
+                detailTile('Present reading', row['present_reading']),
+                detailTile('Usage', row[widget.usageColumn]),
+                detailTile('Amount', peso(row['amount'])),
+                detailTile('Date paid', row['date_paid'] == null ? 'Not paid' : dateText(row['date_paid'])),
+                if (widget.isWater) detailTile('Status', row['status'] ?? 'Pending'),
+              ],
             ),
-            const SizedBox(height: 16),
-            if (row['date_paid'] == null)
-              FilledButton.icon(
-                onPressed: saving ? null : markPaid,
-                icon: const Icon(Icons.check_circle),
-                label: const Text('Mark as paid'),
-              ),
-          ],
-        ),
+          ),
+          const SizedBox(height: 16),
+          if (row['date_paid'] == null)
+            FilledButton.icon(
+              onPressed: saving ? null : markPaid,
+              icon: const Icon(Icons.check_circle),
+              label: const Text('Mark as paid'),
+            ),
+        ],
       ),
     );
   }
@@ -624,16 +622,23 @@ class _GasTransactionsScreenState extends State<GasTransactionsScreen> {
     return rows.map<Map<String, dynamic>>((row) => Map<String, dynamic>.from(row)).toList();
   }
 
+  void refresh() => setState(() => future = load());
+
+  Future<void> openDetails(Map<String, dynamic> row) async {
+    await Navigator.of(context).push(MaterialPageRoute(builder: (_) => GasTransactionDetailScreen(row: row, supabase: supabase)));
+    refresh();
+  }
+
   @override
   Widget build(BuildContext context) {
     return FutureBuilder<List<Map<String, dynamic>>>(
       future: future,
       builder: (context, snapshot) {
         if (snapshot.connectionState != ConnectionState.done) return const Center(child: CircularProgressIndicator());
-        if (snapshot.hasError) return ErrorView(error: snapshot.error, onRetry: () => setState(() => future = load()));
+        if (snapshot.hasError) return ErrorView(error: snapshot.error, onRetry: refresh);
         final rows = snapshot.data!;
         return RefreshIndicator(
-          onRefresh: () async => setState(() => future = load()),
+          onRefresh: () async => refresh(),
           child: ListView(
             padding: const EdgeInsets.all(12),
             children: [
@@ -645,6 +650,7 @@ class _GasTransactionsScreenState extends State<GasTransactionsScreen> {
                     title: Text('${row['transaction_no'] ?? 'No transaction no'} • ${row['driver_name'] ?? ''}'),
                     subtitle: Text('${row['car_description'] ?? ''} ${row['plate_number'] ?? ''}\n${dateText(row['date_from'])} to ${dateText(row['date_to'])} • ${row['destination_from'] ?? ''} to ${row['destination_to'] ?? ''}'),
                     isThreeLine: true,
+                    onTap: () => openDetails(row),
                     trailing: Chip(label: Text((row['status'] ?? 'Pending').toString())),
                   ),
                 ),
